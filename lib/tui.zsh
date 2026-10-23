@@ -171,7 +171,7 @@ hub_tui() {
       tab) ((hub_category=hub_category%${#HUB_CATEGORIES}+1)); hub_selected=1 ;;
       /) if hub_prompt '搜索名称、类别或命令' '' '留空确认可清除搜索。'; then hub_query=$REPLY; hub_selected=1; fi ;;
       c) content=$(hub_doctor); hub_reader '环境检查' "$content" ;;
-      \?) hub_reader '使用帮助' $'Tab 切换分类；/ 搜索。\n方向键或 j/k 选择工具。\nEnter 打开 fzf 工具界面；d 阅读说明。\n工具内输入文字搜索，Ctrl+R 刷新，Esc 返回。\n媒体/ZIP：Ctrl+O 切换目录。媒体：Ctrl+T 切换递归。\nZIP：Ctrl+X 确认整目录处理；执行中 Esc 中断。\n端口：Ctrl+U 切换 TCP/UDP；Enter 确认终止。\nq 或 Esc 返回/退出；Ctrl+C 中断。' ;;
+      \?) hub_reader '使用帮助' $'Tab 切换分类；/ 搜索。\n方向键或 j/k 选择工具。\nEnter 打开 fzf 工具界面；d 阅读说明。\n媒体/ZIP：顶部输入路径后 Enter 切换目录。\nTab 打开单键操作菜单：r 刷新，t 递归，x 整目录处理。\n端口：输入端口后 Enter 精确查询，r 刷新，u 切换协议，k 终止所选。\nPgUp/PgDn 翻页预览；Esc 返回。\nq 或 Esc 返回/退出。' ;;
       enter|d)
         ((${#hub_visible})) || continue
         id=${hub_visible[hub_selected]}

@@ -1,7 +1,7 @@
 <div align="center">
   <h1>Shell Command Hub</h1>
   <p><strong>常用命令，一处收好。</strong></p>
-  <p>macOS Shell 工具箱：媒体属性、ZIP 整理与端口进程管理。</p>
+  <p>macOS Shell 工具箱：媒体属性、解压整理与端口进程管理。</p>
 </div>
 
 `hub` 保留分类、搜索和说明浏览；`vinfo`、`zidy`、`pinfo` 直接进入各自的 fzf TUI。
@@ -15,7 +15,7 @@ brew install fzf mediainfo
 exec zsh
 ```
 
-`fzf` 用于工具交互（兼容本机 0.56.3）；`mediainfo` 仅用于媒体属性。运行环境为 macOS 自带 zsh、Bash 3.2 和系统命令，不需要 Python。
+`fzf` 用于工具交互（本轮验证版本 0.74.5）；`mediainfo` 仅用于媒体属性。运行环境为 macOS 自带 zsh、Bash 3.2 和系统命令，不需要 Python。独立应用已内置这些依赖，终端开发方式才需要自行安装。
 
 ```sh
 hub                         # 主菜单
@@ -35,21 +35,21 @@ pinfo --udp                 # UDP 本地绑定
 | --- | --- |
 | 搜索 | 直接输入文字 |
 | 选择 | ↑ / ↓ |
-| 刷新 | Ctrl+R |
+| 媒体 / ZIP 操作菜单 | Tab，然后按菜单中的单键 |
 | 返回 | Esc |
-| 预览滚动 / 翻页 | Alt+j/k、Ctrl+F/B |
-| 媒体、ZIP：切换目录 | Ctrl+O |
-| 媒体：切换递归 | Ctrl+T |
+| 预览翻页 | PgUp / PgDn |
+| 媒体、ZIP：切换目录 | 顶部直接输入路径 + Enter |
+| 媒体：切换递归 | Tab → t |
 | 媒体：完整属性 / ZIP：处理规则 | Enter |
-| ZIP：确认整目录执行 | Ctrl+X |
-| 端口：切换 TCP / UDP | Ctrl+U |
-| 端口：确认终止所选进程 | Enter |
+| ZIP：确认整目录执行 | Tab → x |
+| 端口：精确查询 | 顶部输入端口 + Enter；留空查全部 |
+| 端口：刷新 / TCP、UDP / 终止所选 | r / u / k |
 
 路径输入支持中文、空格和 `~`，直接填写，无需额外引号；留空保留当前目录，`:cancel` 取消。
 
 媒体只按当前选中项读取 MediaInfo 并缓存；刷新或切换目录后重新读取。不跟随子目录符号链接。
 
-**ZIP 成功解压后会删除原 ZIP，并可能清理包装残留、重命名已有目录。** Ctrl+X 后先显示规则与目标，默认选择取消。执行界面实时显示日志；任务完成后 Enter 查看结果。执行中 Esc 中断并保留未完成的 ZIP，已完成项目不回滚。没有 ZIP 时仍可整理已有目录。
+**ZIP 成功解压后会删除原 ZIP，并可能清理包装残留、重命名已有目录。** Tab → x 后先显示规则与目标，默认选择取消。执行界面实时显示日志；任务完成后 Enter 查看结果。执行中 Esc 中断并保留未完成的 ZIP，已完成项目不回滚。没有 ZIP 时仍可整理已有目录。
 
 端口默认只显示 TCP LISTEN，排除浏览器连接到服务的 TCP 记录；UDP 显示本地绑定。同一 PID、协议和本地端口合并地址。预览显示工作目录和父进程，不读取命令行参数。
 
@@ -113,6 +113,15 @@ source /path/to/shell-command-hub/lib/aliases.zsh
 ```
 
 测试使用临时媒体、ZIP 和测试自身创建的 TCP/UDP 监听进程，覆盖普通 CLI、注册迁移、特殊文件名、原处理规则与真实 PTY 交互。真实终端测试使用 macOS 自带 `/usr/bin/expect`。端口测试只终止测试拥有的进程。
+
+## 独立应用交付
+
+原生 GUI 和终端 TUI 均提供独立 `.app`，内置运行依赖，用户无需开发目录。构建、升级、更新源和签名说明见 [应用交付](docs/distribution.md)。
+
+```sh
+./scripts/build-app.sh
+/bin/bash tests/test_app_bundle.sh
+```
 
 ## 来源
 

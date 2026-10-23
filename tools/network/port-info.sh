@@ -125,7 +125,7 @@ port_detail() {
         ps -p "$parent" -o comm= 2>/dev/null
     fi
     lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | awk '/^n/ { print "工作目录：" substr($0,2) }'
-    printf '\nEnter 选择终止操作；默认 SIGTERM，不会终止进程组。\n'
+    printf '\n终止操作默认 SIGTERM，不会终止进程组。\n'
 }
 
 port_main() {

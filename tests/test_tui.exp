@@ -41,30 +41,44 @@ send -- "q"
 finished
 spawn -noecho /usr/bin/env PATH=$native TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; source "$1/lib/aliases.zsh"; eval 'vinfo "$2"'} zsh $root $media
 see {*媒体信息*}
+send -- "/no-such-hub-directory"
+send -- "\t"
+see {*操作菜单 · 按对应单键*}
+send -- "r"
+see {*媒体信息*}
 send -- "WAV"
 see {*格式：Wave*}
-send -- "\006"
+send -- "\033\[6~"
 see {*8000 Hz*}
-send -- "\024"
+send -- "\t"
+see {*操作菜单 · 按对应单键*}
+send -- "t"
 see {*second.wav*}
-send -- "\017"
-see {*目录（*}
-send -- ":cancel\r"
-see {*媒体信息*}
+send -- "$archive\r"
+see {*已切换目录*}
+send -- "$media\r"
+see {*已切换目录*}
+send -- "WAV"
 send -- "\r"
 see {*Enter/Esc 返回*}
 send -- "\033"
 see {*媒体信息*}
 send -- "\033"
 finished
-spawn -noecho /usr/bin/env PATH=$native TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; source "$1/lib/aliases.zsh"; eval 'zidy "$2"'} zsh $root $archive
-see {*ZIP 整理*}
-send -- "\030"
+spawn -noecho /usr/bin/env PATH=$native TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; source "$1/lib/aliases.zsh"; eval 'zidy "$2"'} zsh $root $media
+see {*解压整理*}
+send -- "$archive\r"
+see {*已切换目录*}
+send -- "\t"
+see {*操作菜单 · 按对应单键*}
+send -- "x"
 see {*默认取消*}
 send -- "\r"
-see {*ZIP 整理*}
+see {*解压整理*}
 if {![file exists "$archive/batch.zip"]} { puts stderr "Cancel changed ZIP input"; exit 1 }
-send -- "\030"
+send -- "\t"
+see {*操作菜单 · 按对应单键*}
+send -- "x"
 see {*默认取消*}
 send -- "\016\r"
 see {*任务结束*}
@@ -74,7 +88,7 @@ if {[file exists "$archive/batch.zip"] || ![file exists "$archive/batch/测试.t
     puts stderr "TUI ZIP execution did not finish as expected"; exit 1
 }
 send -- "\033"
-see {*ZIP 整理*}
+see {*解压整理*}
 send -- "\033"
 finished
 puts "PASS: hub and fzf tools in real PTY (preview, recursion, directory, cancel, ZIP execution, resize)"

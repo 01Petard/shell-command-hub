@@ -16,7 +16,7 @@ if [ "$kind" = log ]; then
         if [ -f "$work/result" ]; then
             printf '任务结束，退出码：%s。Enter 查看结果。\n\n' "$(cat "$work/result")"
         else
-            printf '正在执行 ZIP 整理… Esc 中断。\n\n'
+            printf '正在执行 解压整理… Esc 中断。\n\n'
         fi
         tail -n "$lines" "$work/run.log" | LC_ALL=C awk '{gsub(/[[:cntrl:]]/, " "); print; fflush()}'
         [ ! -f "$work/result" ] || exit 0
@@ -28,7 +28,7 @@ preview() {
     local file name cache temp
     case "$kind" in
         media)
-            [ "$item" != 0 ] || { printf '未找到媒体文件。Ctrl+O 切换目录，Ctrl+T 切换递归。\n'; return; }
+            [ "$item" != 0 ] || { printf '未找到媒体文件。输入路径后 Enter 切换目录，Tab 打开操作菜单。\n'; return; }
             IFS= read -r -d '' file < "$work/$item.path" || return 2
             cache="$work/$item.info"
             if [ ! -f "$cache" ]; then
@@ -50,14 +50,14 @@ preview() {
                 name=${file##*/}
                 printf 'ZIP：%s\n预计解压位置：%s/%s\n\n' "$file" "$root" "${name%.*}"
             fi
-            printf '%s\n' 'Ctrl+X 执行整个目录，不只处理当前选中 ZIP。' \
+            printf '%s\n' 'Tab 打开操作菜单，x 执行整个目录，不只处理当前选中 ZIP。' \
                 '扫描两层 ZIP；成功解压后删除原包，失败保留。' \
                 '同时清理已识别包装残留，并整理已有目录名称。' \
                 '目标存在时跳过；不跟随子目录符号链接。' \
                 '即使没有 ZIP，仍可执行已有目录整理。'
             ;;
         port)
-            [ "$item" != 0 ] || { printf '没有匹配的端口占用。Ctrl+R 刷新，Ctrl+U 切换 TCP/UDP。\n'; return; }
+            [ "$item" != 0 ] || { printf '没有匹配的端口占用。输入端口后 Enter 精确查询，r 刷新，u 切换 TCP/UDP。\n'; return; }
             source "$ROOT/tools/network/port-info.sh"
             port_detail "$work/$item.port"
             ;;

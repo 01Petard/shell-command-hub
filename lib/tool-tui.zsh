@@ -3,7 +3,7 @@ hub_tool_fzf() {
   FZF_DEFAULT_OPTS='' FZF_DEFAULT_OPTS_FILE=/dev/null SHELL=/bin/bash command fzf \
     --layout=reverse --border --height=100% --no-multi --no-sort \
     --delimiter=$'\t' --with-nth=2.. \
-    --bind='ctrl-f:preview-page-down,ctrl-b:preview-page-up,alt-j:preview-down,alt-k:preview-up' \
+    --bind='pgdn:preview-page-down,pgup:preview-page-up' \
     --preview-window='right,55%,wrap,<50(down,45%,wrap)' "$@"
 }
 
@@ -33,6 +33,28 @@ hub_tool_directory() {
   [[ $value == '~/'* ]] && value="$HOME/${value#\~/}"
   [[ -d $value ]] || { notice='目录不存在，未切换。'; return 1; }
   directory=${value:A}
+}
+
+hub_tool_actions() {
+  local kind=$1 selected key row
+  {
+    printf 'q\tq 返回\nr\tr 刷新\nd\td 查看详情/规则\n'
+    [[ $kind != media ]] || printf 't\tt 切换递归\n'
+    [[ $kind != archive ]] || printf 'x\tx 执行整个目录\n'
+  } > "$tool_work/actions"
+  selected=$(hub_tool_fzf --disabled --expect=q,r,d,t,x --header='操作菜单 · 按对应单键，或方向键 + Enter' < "$tool_work/actions") || return 1
+  key=${selected%%$'\n'*}; row=${selected#*$'\n'}
+  REPLY=${key:-${row%%$'\t'*}}
+}
+
+hub_tool_cell() {
+  local value=$1 width=$2 char out='' used=0 cost
+  for char in "${(@s::)value}"; do
+    [[ $char == [\ -\~] ]] && cost=1 || cost=2
+    ((used+cost <= width)) || break
+    out+=$char; ((used+=cost))
+  done
+  printf '%s%*s' "$out" $((width-used)) ''
 }
 
 hub_zip_worker() {
@@ -80,26 +102,22 @@ hub_tool_zip_run() {
 }
 
 hub_tool_files() {
-  local id=$1 directory=$2 recursive=$3 notice='' file label selected key row item index code
+  local id=$1 directory=$2 recursive=$3 notice='' file label selected key row item index code query='' rest destination
   local kind=media title='媒体信息 · vinfo'
-  [[ $id == zip-tidy ]] && { kind=archive; title='ZIP 整理 · zidy'; }
+  [[ $id == zip-tidy ]] && { kind=archive; title='解压整理 · zidy'; }
   while true; do
-    # Refresh invalidates on-demand metadata caches and numeric path mappings.
     rm -f -- "$tool_work"/*(N)
     printf '%s\0' "$directory" > "$tool_work/root.path"
     if [[ $kind == media ]]; then
-      /bin/bash -c 'source "$1"; media_scan "$2" "$3"' _ \
-        "$HUB_ROOT/tools/media/videoinfo_beauty.sh" "$directory" "$recursive" > "$tool_work/paths" 2> "$tool_work/error"
+      /bin/bash -c 'source "$1"; media_scan "$2" "$3"' _ "$HUB_ROOT/tools/media/videoinfo_beauty.sh" "$directory" "$recursive" > "$tool_work/paths" 2> "$tool_work/error"
     else
       find "$directory" -maxdepth 2 -type f -iname '*.zip' -print0 > "$tool_work/paths" 2> "$tool_work/error"
     fi
     code=$?
     if ((code != 0)); then hub_tool_text '扫描失败，未执行任何操作' "$tool_work/error"; return 1; fi
-    index=0
-    : > "$tool_work/items"
+    index=0; : > "$tool_work/items"
     while IFS= read -r -d $'\0' file; do
-      ((index++))
-      printf '%s\0' "$file" > "$tool_work/$index.path"
+      ((index++)); printf '%s\0' "$file" > "$tool_work/$index.path"
       label=${file#"$directory"/}; label=${label//[[:cntrl:]]/ }
       printf '%s\t%s\n' "$index" "$label" >> "$tool_work/items"
     done < "$tool_work/paths"
@@ -108,34 +126,45 @@ hub_tool_files() {
       printf '0\t%s\n' "$label" > "$tool_work/items"
     fi
     while true; do
-      local keys='ctrl-r,ctrl-o' hint='Ctrl+R 刷新 · Ctrl+O 目录 · Esc 返回 · Alt+j/k 预览滚动'
-      if [[ $kind == media ]]; then
-        keys+=',ctrl-t'; hint+=" · Ctrl+T 递归($recursive) · Enter 详情"
+      selected=$(hub_tool_fzf --print-query --query="$query" --bind='enter:accept-or-print-query' --prompt='路径或文件名 > ' --header="$title
+目录：${(V)directory} · $index 项 · 递归 $recursive
+输入路径 + Enter 切换目录 · Tab 操作菜单 · PgUp/PgDn 预览 · Esc 返回
+$notice" --expect=tab \
+        --preview="/bin/bash ${(q)HUB_ROOT}/lib/tool-preview.sh $kind ${(q)tool_work} {1}" < "$tool_work/items")
+      code=$?
+      ((code == 0 || code == 1)) || return 0
+      query=${selected%%$'\n'*}; rest=${selected#*$'\n'}
+      key=${rest%%$'\n'*}; row=${rest#*$'\n'}; item=${row%%$'\t'*}
+      if [[ $key == tab ]]; then
+        hub_tool_actions "$kind" || continue
+        case $REPLY in
+          r) query=''; break ;;
+          t) [[ $kind == media ]] && { recursive=$((1-recursive)); query=''; break; } ;;
+          x) [[ $kind == archive ]] && { hub_tool_zip_run; query=''; break; } ;;
+          d) ;;
+          *) continue ;;
+        esac
       else
-        keys+=',ctrl-x'; hint+=' · Ctrl+X 整目录执行 · Enter 规则'
+        destination=$query
+        [[ $destination == '~' ]] && destination=$HOME
+        [[ $destination == '~/'* ]] && destination="$HOME/${destination#\~/}"
+        [[ $destination == /* ]] || destination="$directory/$destination"
+        if [[ -n $query && -d $destination ]]; then
+          directory=${destination:A}; query=''; notice='已切换目录。'; break
+        fi
+        if [[ -n $query && ( $query == */* || $query == '~'* || -z $item ) ]]; then
+          notice='目录不存在，请输入有效路径后按 Enter。'; continue
+        fi
       fi
-      selected=$(hub_tool_fzf --header="$title
-目录：${(V)directory} · $index 项
-$hint
-$notice" --expect="$keys" \
-        --preview="/bin/bash ${(q)HUB_ROOT}/lib/tool-preview.sh $kind ${(q)tool_work} {1}" < "$tool_work/items") || return 0
-      key=${selected%%$'\n'*}; row=${selected#*$'\n'}; item=${row%%$'\t'*}
-      case $key in
-        ctrl-r) break ;;
-        ctrl-o) hub_tool_directory && break ;;
-        ctrl-t) recursive=$((1-recursive)); break ;;
-        ctrl-x) hub_tool_zip_run; break ;;
-        '')
-          /bin/bash "$HUB_ROOT/lib/tool-preview.sh" "$kind" "$tool_work" "${item:-0}" > "$tool_work/detail"
-          hub_tool_text "$title" "$tool_work/detail"
-          ;;
-      esac
+      [[ $item == <-> ]] || continue
+      /bin/bash "$HUB_ROOT/lib/tool-preview.sh" "$kind" "$tool_work" "$item" > "$tool_work/detail"
+      hub_tool_text "$title" "$tool_work/detail"
     done
   done
 }
 
 hub_tool_ports() {
-  local protocol=$1 filter=$2 notice='' selected key row item index pid user process addresses started code
+  local protocol=$1 filter=$2 notice='' selected key row item index pid user process addresses started code query rest selected_port
   local port_script="$HUB_ROOT/tools/network/port-info.sh"
   while true; do
     rm -f -- "$tool_work"/*(N)
@@ -143,28 +172,39 @@ hub_tool_ports() {
       hub_tool_text '端口读取失败' "$tool_work/error"; return 2
     fi
     index=0
-    : > "$tool_work/items"
+    {
+      printf 'header\t'; hub_tool_cell '协议' 6; hub_tool_cell '端口' 8; hub_tool_cell 'PID' 10
+      hub_tool_cell '进程' 24; hub_tool_cell '用户' 14; printf '本地地址\n'
+    } > "$tool_work/items"
     while IFS= read -r row; do
-      ((index++))
-      print -r -- "$row" > "$tool_work/$index.port"
+      ((index++)); print -r -- "$row" > "$tool_work/$index.port"
       local -a fields=("${(@ps:\t:)row}")
-      printf '%s\t%s %s  PID %s  %s  %s  %s\n' "$index" "${fields[2]}" "${fields[3]}" "${fields[1]}" "${fields[5]}" "${fields[4]}" "${fields[6]}" >> "$tool_work/items"
+      {
+        printf '%s\t' "$index"
+        hub_tool_cell "${fields[2]}" 6; hub_tool_cell "${fields[3]}" 8; hub_tool_cell "${fields[1]}" 10
+        hub_tool_cell "${fields[5]}" 24; hub_tool_cell "${fields[4]}" 14; printf '%s\n' "${fields[6]}"
+      } >> "$tool_work/items"
     done < "$tool_work/rows"
-    ((index)) || printf '0\t（没有匹配的端口占用）\n' > "$tool_work/items"
-    selected=$(hub_tool_fzf --header="端口管理 · pinfo · $protocol · 端口 ${filter:-全部}
-Ctrl+R 刷新 · Ctrl+U 切换 TCP/UDP · Enter 终止操作 · Esc 返回
-$notice" --expect=ctrl-r,ctrl-u \
+    ((index)) || printf '0\t（没有匹配的端口占用）\n' >> "$tool_work/items"
+    selected=$(hub_tool_fzf --disabled --print-query --query="$filter" --prompt='精确端口 > ' --header-lines=1 \
+      --header="端口管理 · pinfo · $protocol · 端口 ${filter:-全部}
+输入端口 + Enter 精确查询（留空查询全部）
+r 刷新 · u TCP/UDP · k 终止所选 · p 详情 · q/Esc 返回
+$notice" --expect=r,u,k,q \
+      --preview-window='default,down,35%,wrap,hidden' --bind='p:toggle-preview' \
       --preview="/bin/bash ${(q)HUB_ROOT}/lib/tool-preview.sh port ${(q)tool_work} {1}" < "$tool_work/items") || return 0
-    key=${selected%%$'\n'*}; row=${selected#*$'\n'}; item=${row%%$'\t'*}
-    case $key in
-      ctrl-r) continue ;;
-      ctrl-u) [[ $protocol == TCP ]] && protocol=UDP || protocol=TCP; continue ;;
-    esac
-    [[ $item != 0 && -f "$tool_work/$item.port" ]] || continue
-    IFS=$'\t' read -r pid protocol filter user process addresses started < "$tool_work/$item.port"
-    # Selecting a row must not turn an unfiltered view into a permanent port filter.
-    local selected_port=$filter
-    filter=$2
+    query=${selected%%$'\n'*}; rest=${selected#*$'\n'}
+    key=${rest%%$'\n'*}; row=${rest#*$'\n'}; item=${row%%$'\t'*}
+    [[ $key != q ]] || return 0
+    if [[ -n $query && ( $query != <1-65535> || ${#query} -gt 5 ) ]]; then notice='端口必须为 1–65535。'; continue; fi
+    [[ -z $query ]] || query=$((10#$query))
+    if [[ $key != k || $query != "$filter" ]]; then
+      filter=$query
+      [[ $key != u ]] || { [[ $protocol == TCP ]] && protocol=UDP || protocol=TCP; }
+      notice='按本地端口精确查询。'; continue
+    fi
+    [[ $item == <1-> && -f "$tool_work/$item.port" ]] || continue
+    IFS=$'\t' read -r pid protocol selected_port user process addresses started < "$tool_work/$item.port"
     hub_tool_confirm "终止 PID $pid · SIGTERM" "进程：$process
 用户：$user
 端口：$protocol $selected_port

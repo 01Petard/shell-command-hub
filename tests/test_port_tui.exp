@@ -13,22 +13,32 @@ proc see {pattern} {
     }
 }
 # macOS PENDIN describes queued typeahead, rather than a persistent terminal mode.
-spawn -noecho /usr/bin/env TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; term_state() { local state=$(stty -a); print -r -- "${${state//-pendin/}//pendin/}"; }; saved=$(term_state); source "$1/lib/aliases.zsh"; eval 'pinfo "$2"'; code=$?; [[ $(term_state) == $saved ]] || exit 99; exit $code} zsh $root $port
+spawn -noecho /usr/bin/env TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; term_state() { local state=$(stty -a); print -r -- "${${state//-pendin/}//pendin/}"; }; saved=$(term_state); source "$1/lib/aliases.zsh"; eval pinfo; code=$?; [[ $(term_state) == $saved ]] || exit 99; exit $code} zsh $root $port
 see {*端口管理*}
-see "*PID $pid*"
-send -- "\025"
+send -- "$port\r"
+set seenPort 0
+set seenPid 0
+while {!$seenPort || !$seenPid} {
+    expect {
+        -re "(端口 $port|$pid)" {
+            if {$expect_out(1,string) == "端口 $port"} { set seenPort 1 } else { set seenPid 1 }
+        }
+        timeout { puts stderr "Exact query did not show both local port and owned PID"; exit 1 }
+        eof { puts stderr "Exact query exited early"; exit 1 }
+    }
+}
+send -- "u"
 see {*UDP*}
-send -- "\022"
+send -- "r"
 see {*UDP*}
-send -- "\025"
+send -- "u"
 see {*TCP*}
-send -- "$pid"
-send -- "\r"
+send -- "k"
 see {*默认取消*}
 send -- "\r"
 see {*端口管理*}
 if {[catch {exec /bin/kill -0 $pid}]} { puts stderr "Cancel terminated test process"; exit 1 }
-send -- "\r"
+send -- "k"
 see {*默认取消*}
 send -- "\016\r"
 see {*原进程已退出*}
