@@ -1,0 +1,4 @@
+# id	name	category	summary	entry	runtime	alias	dependency	platform	recursive	dangerous	doc
+media-info	媒体信息查看	媒体与文件	扫描视频和音频，查看格式、时长、分辨率、码率和音轨属性。	tools/media/videoinfo_beauty.sh	bash	vinfo	mediainfo	any	yes	no	docs/media.md
+zip-tidy	批量解压整理	压缩与解压	扫描两层 ZIP，成功解压后删除原包，清理包装目录并整理目录名。	tools/archive/zip-tidy.sh	bash	zidy	/usr/bin/ditto	darwin	no	yes	docs/archive.md
+port-info	端口进程管理	网络与进程	查看 TCP 监听与 UDP 绑定，识别端口进程并交互终止。	tools/network/port-info.sh	bash	pinfo	lsof	darwin	no	yes	docs/network.md

@@ -1,0 +1,41 @@
+#!/usr/bin/expect -f
+set timeout 15
+log_user 0
+if {[info exists env(HUB_TEST_VERBOSE)]} { log_user 1 }
+set root [lindex $argv 0]
+set port [lindex $argv 1]
+set pid [lindex $argv 2]
+proc see {pattern} {
+    expect {
+        -glob $pattern { return }
+        timeout { puts stderr "Port TUI timeout: $pattern"; exit 1 }
+        eof { puts stderr "Port TUI exited before: $pattern"; exit 1 }
+    }
+}
+# macOS PENDIN describes queued typeahead, rather than a persistent terminal mode.
+spawn -noecho /usr/bin/env TERM=xterm-256color /bin/zsh -f -c {stty rows 32 cols 110; term_state() { local state=$(stty -a); print -r -- "${${state//-pendin/}//pendin/}"; }; saved=$(term_state); source "$1/lib/aliases.zsh"; eval 'pinfo "$2"'; code=$?; [[ $(term_state) == $saved ]] || exit 99; exit $code} zsh $root $port
+see {*端口管理*}
+see "*PID $pid*"
+send -- "\025"
+see {*UDP*}
+send -- "\022"
+see {*UDP*}
+send -- "\025"
+see {*TCP*}
+send -- "$pid"
+send -- "\r"
+see {*默认取消*}
+send -- "\r"
+see {*端口管理*}
+if {[catch {exec /bin/kill -0 $pid}]} { puts stderr "Cancel terminated test process"; exit 1 }
+send -- "\r"
+see {*默认取消*}
+send -- "\016\r"
+see {*原进程已退出*}
+send -- "\033"
+see {*端口管理*}
+send -- "\033"
+expect eof
+set result [wait]
+if {[lindex $result 3] != 0} { puts stderr "Port TUI exit: $result"; exit 1 }
+puts "PASS: port TUI protocol switch, refresh, cancel, test-owned SIGTERM, terminal restore"

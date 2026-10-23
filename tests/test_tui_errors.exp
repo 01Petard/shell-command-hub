@@ -1,0 +1,28 @@
+#!/usr/bin/expect -f
+set timeout 10
+log_user 0
+if {[info exists env(HUB_TEST_VERBOSE)]} { log_user 1 }
+set root [lindex $argv 0]
+set native [lindex $argv 1]
+set work [lindex $argv 2]
+spawn -noecho /usr/bin/env PATH=$native TERM=xterm-256color $root/hub tui port-info
+expect {
+    -glob {*缺少 fzf*} {}
+    timeout { puts stderr "Missing fzf did not report its dependency"; exit 1 }
+    eof { puts stderr "Missing fzf exited without a diagnostic"; exit 1 }
+}
+expect eof
+set result [wait]
+if {[lindex $result 3] != 2} { puts stderr "Missing fzf exit: $result"; exit 1 }
+file mkdir "$work/hup"
+spawn -noecho /usr/bin/env TMPDIR=$work/hup TERM=xterm-256color /bin/zsh -f -c {stty rows 24 cols 80; exec "$1/hub" tui port-info 65535} zsh $root
+expect {
+    -glob {*端口管理*} {}
+    timeout { puts stderr "HUP fixture failed to open"; exit 1 }
+    eof { puts stderr "HUP fixture exited before opening"; exit 1 }
+}
+close
+set result [wait]
+if {[lindex $result 3] == 0} { puts stderr "Terminal close unexpectedly reported normal completion: $result"; exit 1 }
+if {[llength [glob -nocomplain -directory "$work/hup" *]] != 0} { puts stderr "HUP leaked TUI temporary files"; exit 1 }
+puts "PASS: missing-fzf diagnostic and terminal-close cleanup"

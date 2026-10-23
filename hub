@@ -1,0 +1,36 @@
+#!/bin/zsh
+emulate -R zsh
+setopt pipefail
+HUB_ROOT=${0:A:h}
+source "$HUB_ROOT/lib/core.zsh" || exit 2
+hub_load_catalog || exit 2
+case ${1:-tui} in
+  tui)
+    shift 2>/dev/null
+    source "$HUB_ROOT/lib/tool-tui.zsh"
+    if (($#)); then
+      hub_lookup "$1" || exit 2
+      item=$REPLY; shift
+      hub_tool_tui "$item" "$@"
+    else
+      source "$HUB_ROOT/lib/tui.zsh"
+      hub_tui
+    fi
+    ;;
+  list) shift; hub_list "$@" ;;
+  show) shift; hub_lookup "${1-}" || exit 2; cat -- "$HUB_ROOT/${HUB_DOCS[$REPLY]}" ;;
+  run) shift; hub_lookup "${1-}" || exit 2; item=$REPLY; shift; [[ ${1-} == -- ]] && shift; hub_run "$item" "$@" ;;
+  doctor) hub_doctor ;;
+  install|uninstall) action=$1; shift; source "$HUB_ROOT/lib/install.zsh"; hub_configure "$action" "$@" ;;
+  -h|--help|help)
+    print -r -- 'Shell Command Hub — macOS 原生 Shell 工具箱'
+    print -r -- './hub [tui]                 打开全屏终端界面'
+    print -r -- './hub tui <工具> [参数...]   打开指定工具的 fzf 界面'
+    print -r -- './hub list [关键词]         列出/搜索工具和手册'
+    print -r -- './hub show <命令>           阅读说明'
+    print -r -- './hub run <工具> [参数...]   直接执行工具'
+    print -r -- './hub doctor                检查环境'
+    print -r -- './hub install|uninstall [--rc 文件]  注册/卸载快捷命令'
+    ;;
+  *) print -ru2 -- "未知操作：$1。使用 ./hub --help 查看帮助。"; exit 2 ;;
+esac
