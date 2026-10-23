@@ -1,4 +1,5 @@
 <div align="center">
+  <img src="docs/assets/hub-icon.png" alt="Shell Command Hub 应用图标" width="128" height="128">
   <h1>Shell Command Hub</h1>
   <p><strong>常用命令，一处收好。</strong></p>
   <p>macOS Shell 工具箱：媒体属性、解压整理与端口进程管理。</p>
