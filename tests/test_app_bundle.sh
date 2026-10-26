@@ -15,8 +15,9 @@ for name in 'Shell Command Hub' 'Shell Command Hub TUI'; do
     resources="$relocated/Contents/Resources"
     [ "$(/usr/bin/plutil -extract CFBundleIconFile raw "$relocated/Contents/Info.plist")" = HubIcon.icns ]
     /usr/bin/iconutil -c iconset "$resources/HubIcon.icns" -o "$work/icon-$name.iconset"
-    [ -f "$work/icon-$name.iconset/icon_512x512@2x.png" ]
-    "$work/test-app-icon" "$relocated"
+    [ -f "$work/icon-$name.iconset/icon_512x512.png" ]
+    [ ! -f "$work/icon-$name.iconset/icon_512x512@2x.png" ]
+    "$work/test-app-icon" "$relocated" "$ROOT/build/release/HubIcon.png"
     for binary in "$resources/runtime/bin/"* "$resources/runtime/lib/"*; do
         if /usr/bin/otool -L "$binary" | grep -q '/opt/homebrew\|/usr/local/'; then echo "FAIL: external runtime reference: $binary"; exit 1; fi
     done

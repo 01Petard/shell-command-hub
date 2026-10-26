@@ -1,5 +1,32 @@
 import AppKit
 
+let png = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[2])))!
+guard png.pixelsWide == 512, png.pixelsHigh == 512 else {
+    fputs("FAIL: icon PNG must be 512x512\n", stderr)
+    exit(1)
+}
+var minX = 512, minY = 512, maxX = -1, maxY = -1
+for y in 0..<512 {
+    for x in 0..<512 {
+        let color = png.colorAt(x: x, y: y)!.usingColorSpace(.sRGB)!
+        if color.alphaComponent > 0.99 {
+            minX = min(minX, x); maxX = max(maxX, x)
+            minY = min(minY, y); maxY = max(maxY, y)
+        }
+    }
+}
+guard (39...40).contains(minX), abs((maxX - minX) - (maxY - minY)) <= 1,
+      abs(minX + maxX - 511) <= 2, abs(minY + maxY - 511) <= 2 else {
+    fputs("FAIL: icon tile must be square and centered with the DevDock inset\n", stderr)
+    exit(1)
+}
+guard png.colorAt(x: 0, y: 0)!.alphaComponent == 0,
+      png.colorAt(x: 511, y: 511)!.alphaComponent == 0 else {
+    fputs("FAIL: icon corners must be transparent\n", stderr)
+    exit(1)
+}
+print("PASS: 512x512 PNG with centered tile, DevDock inset and transparent corners")
+
 let app = URL(fileURLWithPath: CommandLine.arguments[1])
 let expected = NSImage(contentsOf: app.appendingPathComponent("Contents/Resources/HubIcon.icns"))!
 let resolved = NSWorkspace.shared.icon(forFile: app.path)

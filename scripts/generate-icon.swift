@@ -8,6 +8,10 @@ func render(_ pixels: Int) -> Data {
     let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: pixels, pixelsHigh: pixels, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
     NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
     let context = NSGraphicsContext.current!.cgContext; context.scaleBy(x: CGFloat(pixels) / 1024, y: CGFloat(pixels) / 1024)
+    // Scale the complete artwork to leave the same 80/1024 inset as DevDock.
+    context.translateBy(x: 512, y: 512)
+    context.scaleBy(x: 864.0 / 928.0, y: 864.0 / 928.0)
+    context.translateBy(x: -512, y: -512)
     let tile = NSBezierPath(roundedRect: NSRect(x: 48, y: 48, width: 928, height: 928), xRadius: 208, yRadius: 208)
     NSGradient(starting: NSColor(srgbRed: 0.16, green: 0.47, blue: 0.88, alpha: 1), ending: NSColor(srgbRed: 0.07, green: 0.25, blue: 0.59, alpha: 1))!.draw(in: tile, angle: -90)
     NSColor.white.withAlphaComponent(0.18).setStroke(); tile.lineWidth = 3; tile.stroke()
@@ -27,8 +31,9 @@ func render(_ pixels: Int) -> Data {
     NSGraphicsContext.restoreGraphicsState()
     return bitmap.representation(using: .png, properties: [:])!
 }
-for size in [16, 32, 128, 256, 512] {
+for size in [16, 32, 128, 256] {
     try render(size).write(to: iconset.appendingPathComponent("icon_\(size)x\(size).png"))
     try render(size * 2).write(to: iconset.appendingPathComponent("icon_\(size)x\(size)@2x.png"))
 }
-try render(1024).write(to: directory.appendingPathComponent("HubIcon.png"))
+try render(512).write(to: iconset.appendingPathComponent("icon_512x512.png"))
+try render(512).write(to: directory.appendingPathComponent("HubIcon.png"))
