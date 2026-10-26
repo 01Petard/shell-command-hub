@@ -119,11 +119,23 @@ source /path/to/shell-command-hub/lib/aliases.zsh
 
 原生 GUI 和终端 TUI 均提供独立 `.app`，内置运行依赖，用户无需开发目录。构建、升级、更新源和签名说明见 [应用交付](docs/distribution.md)。
 
+GUI 使用符合 macOS 风格的圆角矩形应用图标，侧栏完整显示 Shell Command Hub，可从底部“进入终端TUI”打开终端界面，并支持 macOS 原生全屏。
+
+- **媒体信息、解压整理**：支持“清空”当前目录、列表和详情，不删除文件；“最近查看”分别缓存最近 10 个有效目录，支持移除单条或清空全部历史。清空当前查看不会清空历史。
+- **文件操作**：右键文件可使用系统默认应用打开、打开文件目录、在访达中显示或复制路径。媒体文件使用系统默认播放器。
+- **列表排序**：媒体默认按文件名、端口默认按端口号升序排列；点击列头切换排序方向。文件大小自动显示为 KB、MB、GB 等单位，并按实际字节数排序。
+- **解压整理**：“处理计划”占据更大区域；“重新扫描”只刷新 ZIP 清单及预计解压位置，“开始整理”才执行文件处理。
+
+本应用采用 macOS 的窗口交互模型：**关闭窗口 ≠ 退出程序**。红色关闭按钮及 ⌘W 仅关闭窗口，进程和正在执行的任务继续运行；点击 Dock 图标可快速重新唤起并保留当前状态。黄色按钮用于最小化；只有主动选择应用菜单或 Dock 中的“退出”（⌘Q）才终止程序，存在任务时会先确认中断。
+
 ```sh
 ./scripts/build-app.sh
+/bin/bash tests/test_app_interactions.sh
 /bin/bash tests/test_app_bundle.sh
 ```
 
 ## 来源
 
 媒体工具来自 [beauty-media-info](https://github.com/01Petard/beauty-media-info)，CLI 保留 `[-t] [目录]` 用法，使用 MediaInfo raw 固定字段解析。ZIP 工具保留两层扫描、成功删包、包装清理、目录改名及退出码规则。
+
+端口管理功能受益于 [DevDeck](https://github.com/01Petard/DevDeck) 项目，感谢其提供的思路与启发。

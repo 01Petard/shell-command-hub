@@ -5,7 +5,7 @@ let bundle = Bundle.main
 let resources = bundle.resourceURL!
 let toolbox = resources.appendingPathComponent("toolbox")
 let runtime = resources.appendingPathComponent("runtime/bin")
-let appVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.1"
+let appVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.2"
 func environment() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = runtime.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
@@ -57,9 +57,9 @@ func symbol(_ name: String, description: String, size: CGFloat = 18) -> NSImageV
 }
 final class FlippedView: NSView { override var isFlipped: Bool { true } }
 
-final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSMenuDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-    let defaults = UserDefaults.standard
+    let defaults: UserDefaults
     let sidebar = NSTableView()
     let workspace = NSView()
     let mediaPage = NSView(), archivePage = NSView(), portsPage = NSView()
@@ -69,7 +69,11 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     let mediaChoose = NSButton(title: "选择目录…", target: nil, action: nil)
     let archiveChoose = NSButton(title: "选择目录…", target: nil, action: nil)
     let mediaRefresh = NSButton(title: "重新扫描", target: nil, action: nil)
-    let archiveRefresh = NSButton(title: "更新计划", target: nil, action: nil)
+    let archiveRefresh = NSButton(title: "重新扫描", target: nil, action: nil)
+    let mediaClear = NSButton(title: "清空", target: nil, action: nil)
+    let archiveClear = NSButton(title: "清空", target: nil, action: nil)
+    let mediaRecent = NSPopUpButton(frame: .zero, pullsDown: true)
+    let archiveRecent = NSPopUpButton(frame: .zero, pullsDown: true)
     let portRefresh = NSButton(title: "查询", target: nil, action: nil)
     let recursive = NSButton(checkboxWithTitle: "包含子目录", target: nil, action: nil)
     let mediaSearch = NSSearchField()
@@ -91,10 +95,17 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     var tool = 0
     var mediaFiles: [String] = [], visibleMedia: [String] = [], archives: [String] = [], ports: [[String]] = []
     var mediaCache: [String: Data] = [:]
+    var mediaSizes: [String: Int64] = [:]
+    var mediaSortColumn = 0, mediaSortAscending = true
+    var portSortColumn = 0, portSortAscending = true
+    var reordering = false
+    var fullscreenTransition = false
     var mediaDirectory = NSHomeDirectory(), archiveDirectory = NSHomeDirectory(), portQuery = ""
     var process: Process?
     var busy = false, archiveRunning = false, quitting = false, restoring = true
     var currentStatus: NSTextField { [mediaStatus, archiveStatus, portStatus][tool] }
+
+    init(defaults: UserDefaults = .standard) { self.defaults = defaults; super.init() }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = NSImage(contentsOf: resources.appendingPathComponent("HubIcon.icns"))
@@ -102,14 +113,21 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "关于 Shell Command Hub", action: #selector(about), keyEquivalent: "")
         appMenu.addItem(withTitle: "检查更新…", action: #selector(checkUpdates), keyEquivalent: "")
-        appMenu.addItem(withTitle: "打开终端 TUI", action: #selector(openTerminal), keyEquivalent: "")
+        appMenu.addItem(withTitle: "进入终端TUI", action: #selector(openTerminal), keyEquivalent: "")
         appMenu.addItem(.separator())
         let close = appMenu.addItem(withTitle: "关闭窗口", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"); close.target = window
+        appMenu.addItem(.separator())
+        let quit = appMenu.addItem(withTitle: "退出 Shell Command Hub", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); quit.target = NSApp
         item.submenu = appMenu
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title: "编辑")
         for (title, selector, key) in [("剪切", "cut:", "x"), ("复制", "copy:", "c"), ("粘贴", "paste:", "v"), ("全选", "selectAll:", "a")] { edit.addItem(withTitle: title, action: Selector(selector), keyEquivalent: key) }
         editItem.submenu = edit; NSApp.mainMenu = menu
+        let windowItem = NSMenuItem(); menu.addItem(windowItem)
+        let windowMenu = NSMenu(title: "窗口"); windowItem.submenu = windowMenu; NSApp.windowsMenu = windowMenu
+        let fullscreen = windowMenu.addItem(withTitle: "进入全屏幕", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullscreen.keyEquivalentModifierMask = [.control, .command]; fullscreen.target = window
         window.title = "Shell Command Hub"; window.minSize = NSSize(width: 900, height: 620)
+        window.collectionBehavior.insert(.fullScreenPrimary)
         window.delegate = self; window.isReleasedWhenClosed = false
         tool = min(2, max(0, defaults.integer(forKey: "selectedTool")))
         mediaDirectory = defaults.string(forKey: "mediaDirectory") ?? NSHomeDirectory()
@@ -137,17 +155,18 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let side = NSVisualEffectView(); side.material = .sidebar; side.blendingMode = .behindWindow
         let content = window.contentView!; side.translatesAutoresizingMaskIntoConstraints = false; workspace.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(side); content.addSubview(workspace)
-        NSLayoutConstraint.activate([side.leadingAnchor.constraint(equalTo: content.leadingAnchor), side.topAnchor.constraint(equalTo: content.topAnchor), side.bottomAnchor.constraint(equalTo: content.bottomAnchor), side.widthAnchor.constraint(equalToConstant: 174), workspace.leadingAnchor.constraint(equalTo: side.trailingAnchor), workspace.trailingAnchor.constraint(equalTo: content.trailingAnchor), workspace.topAnchor.constraint(equalTo: content.topAnchor), workspace.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
-        let logo = NSImageView(image: NSApp.applicationIconImage); logo.widthAnchor.constraint(equalToConstant: 32).isActive = true; logo.heightAnchor.constraint(equalToConstant: 32).isActive = true
-        let brand = stack([logo, text("Command Hub", size: 14, weight: .semibold)], vertical: false, spacing: 8)
-        sidebar.headerView = nil; sidebar.rowHeight = 38; sidebar.style = .sourceList; sidebar.backgroundColor = .clear
+        NSLayoutConstraint.activate([side.leadingAnchor.constraint(equalTo: content.leadingAnchor), side.topAnchor.constraint(equalTo: content.topAnchor), side.bottomAnchor.constraint(equalTo: content.bottomAnchor), side.widthAnchor.constraint(equalToConstant: 224), workspace.leadingAnchor.constraint(equalTo: side.trailingAnchor), workspace.trailingAnchor.constraint(equalTo: content.trailingAnchor), workspace.topAnchor.constraint(equalTo: content.topAnchor), workspace.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
+        let logo = NSImageView(image: NSApp.applicationIconImage); logo.widthAnchor.constraint(equalToConstant: 40).isActive = true; logo.heightAnchor.constraint(equalToConstant: 40).isActive = true
+        let brand = stack([logo, stack([text("Shell", size: 12, weight: .medium, color: .secondaryLabelColor), text("Command Hub", size: 15, weight: .semibold)], spacing: 1)], vertical: false, spacing: 10)
+        sidebar.headerView = nil; sidebar.rowHeight = 44; sidebar.style = .plain; sidebar.backgroundColor = .clear
+        sidebar.intercellSpacing = .zero; sidebar.selectionHighlightStyle = .regular
         sidebar.delegate = self; sidebar.dataSource = self; sidebar.focusRingType = .none
         sidebar.addTableColumn(NSTableColumn(identifier: .init("navigation")))
         let navigation = NSScrollView(); navigation.drawsBackground = false; navigation.documentView = sidebar
-        navigation.heightAnchor.constraint(equalToConstant: 126).isActive = true
-        let terminal = NSButton(title: "打开终端 TUI", image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)!, target: self, action: #selector(openTerminal)); terminal.bezelStyle = .recessed
+        navigation.heightAnchor.constraint(equalToConstant: 132).isActive = true
+        let terminal = NSButton(title: "进入终端TUI", image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)!, target: self, action: #selector(openTerminal)); terminal.bezelStyle = .recessed
         let spacer = NSView(); spacer.setContentHuggingPriority(.init(1), for: .vertical)
-        let contents = stack([brand, navigation, spacer, terminal, text("关闭窗口后应用仍在运行", size: 11, color: .secondaryLabelColor)], spacing: 18)
+        let contents = stack([brand, navigation, spacer, terminal], spacing: 22)
         pin(contents, in: side, inset: 14); navigation.widthAnchor.constraint(equalTo: contents.widthAnchor).isActive = true
         for page in [mediaPage, archivePage, portsPage] { pin(page, in: workspace) }
     }
@@ -156,7 +175,12 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         for (index, item) in columns.enumerated() {
             let column = NSTableColumn(identifier: .init(String(index))); column.title = item.0; column.width = item.1; column.minWidth = min(item.1, 70)
+            if table === mediaTable || table === portTable { column.sortDescriptorPrototype = NSSortDescriptor(key: String(index), ascending: true) }
             table.addTableColumn(column)
+        }
+        if table === mediaTable || table === portTable { table.sortDescriptors = [NSSortDescriptor(key: "0", ascending: true)] }
+        if table === mediaTable || table === archiveTable {
+            let menu = NSMenu(); menu.delegate = self; table.menu = menu
         }
         let scroll = NSScrollView(); scroll.documentView = table; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = true; scroll.borderType = .bezelBorder
         return scroll
@@ -166,16 +190,18 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         mediaInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         mediaChoose.target = self; mediaChoose.action = #selector(chooseDirectory); mediaChoose.tag = 0
         mediaRefresh.target = self; mediaRefresh.action = #selector(scanMedia)
+        mediaClear.target = self; mediaClear.action = #selector(clearCurrent); mediaClear.tag = 0
+        configureRecent(mediaRecent, page: 0)
         recursive.target = self; recursive.action = #selector(scanMedia)
         mediaSearch.placeholderString = "筛选文件名"; mediaSearch.delegate = self
         mediaSearch.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
-        let path = stack([mediaInput, mediaChoose, mediaRefresh], vertical: false)
-        let filters = stack([mediaSearch, recursive], vertical: false, spacing: 18)
+        let path = stack([mediaInput, mediaChoose, mediaRecent], vertical: false)
+        let filters = stack([mediaSearch, recursive, mediaRefresh, mediaClear], vertical: false, spacing: 12)
         mediaSearch.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let files = tableScroll(mediaTable, columns: [("媒体文件", 300), ("格式", 70)])
+        let files = tableScroll(mediaTable, columns: [("媒体文件", 250), ("格式", 65), ("文件大小", 90)])
         mediaTable.rowHeight = 38
-        let library = stack([filters, files, mediaCount], spacing: 10)
-        filters.widthAnchor.constraint(equalTo: library.widthAnchor).isActive = true; files.widthAnchor.constraint(equalTo: library.widthAnchor).isActive = true
+        let library = stack([files, mediaCount], spacing: 10)
+        files.widthAnchor.constraint(equalTo: library.widthAnchor).isActive = true
         let details = NSScrollView(); details.hasVerticalScroller = true; details.drawsBackground = false
         let document = FlippedView(); document.translatesAutoresizingMaskIntoConstraints = false; details.documentView = document
         document.widthAnchor.constraint(equalTo: details.contentView.widthAnchor).isActive = true
@@ -183,27 +209,33 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let split = NSSplitView(); split.isVertical = true; split.dividerStyle = .thin
         split.addArrangedSubview(library); split.addArrangedSubview(details)
         library.widthAnchor.constraint(greaterThanOrEqualToConstant: 250).isActive = true
-        details.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
-        details.widthAnchor.constraint(lessThanOrEqualToConstant: 390).isActive = true
-        details.widthAnchor.constraint(equalTo: split.widthAnchor, multiplier: 0.43).isActive = true
-        let root = stack([text("媒体信息", size: 24, weight: .semibold), text("浏览音视频文件，查看格式、时长与音轨属性。", color: .secondaryLabelColor), path, split, mediaStatus], spacing: 16)
+        details.widthAnchor.constraint(greaterThanOrEqualToConstant: 240).isActive = true
+        let detailWidth = details.widthAnchor.constraint(equalTo: split.widthAnchor, multiplier: 0.38)
+        detailWidth.priority = .defaultHigh; detailWidth.isActive = true
+        let root = stack([text("媒体信息", size: 24, weight: .semibold), text("浏览音视频文件，查看格式、时长与音轨属性。", color: .secondaryLabelColor), path, filters, split, mediaStatus], spacing: 16)
         pin(root, in: mediaPage, inset: 24)
-        for view in [path, split, mediaStatus] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for view in [path, filters, split, mediaStatus] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         split.setContentHuggingPriority(.init(1), for: .vertical); showMediaPlaceholder("选择一个媒体文件", message: "文件属性会显示在这里。可直接输入路径切换目录，或开启子目录扫描。")
     }
     func buildArchivePage() {
-        archiveInput.placeholderString = "输入需要整理的目录路径，按回车更新计划"; archiveInput.target = self; archiveInput.action = #selector(scanArchive)
+        archiveInput.placeholderString = "输入需要整理的目录路径，按回车扫描"; archiveInput.target = self; archiveInput.action = #selector(scanArchive)
         archiveInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         archiveChoose.target = self; archiveChoose.action = #selector(chooseDirectory); archiveChoose.tag = 1
         archiveRefresh.target = self; archiveRefresh.action = #selector(scanArchive)
-        let path = stack([archiveInput, archiveChoose, archiveRefresh], vertical: false)
+        archiveRefresh.toolTip = "重新扫描当前目录，刷新待处理 ZIP 和预计解压位置；不会执行整理。"
+        archiveClear.target = self; archiveClear.action = #selector(clearCurrent); archiveClear.tag = 1
+        configureRecent(archiveRecent, page: 1)
+        let path = stack([archiveInput, archiveChoose, archiveRecent], vertical: false)
         let rules = stack([
             stack([symbol("checkmark.circle", description: "成功"), text("成功解压后删除原包；失败或目标已存在时保留原包。")], vertical: false),
             stack([symbol("folder", description: "处理范围"), text("扫描两层 ZIP，同时清理包装目录并整理文件夹名称。")], vertical: false)
         ], spacing: 8)
         rules.setContentHuggingPriority(.required, for: .vertical)
         let plan = tableScroll(archiveTable, columns: [("待处理压缩包", 240), ("预计解压位置", 400)])
-        let planPane = stack([archiveCount, plan], spacing: 10); plan.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true
+        let planHeading = stack([archiveCount, archiveRefresh, archiveClear], vertical: false)
+        archiveCount.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let planPane = stack([planHeading, plan], spacing: 10)
+        planHeading.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true; plan.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true
         archiveLog.isEditable = false; archiveLog.isSelectable = true; archiveLog.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         archiveLog.textContainerInset = NSSize(width: 12, height: 12); archiveLog.isHorizontallyResizable = false; archiveLog.isVerticallyResizable = true
         archiveLog.autoresizingMask = [.width]; archiveLog.textContainer?.widthTracksTextView = true
@@ -213,8 +245,9 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let split = stack([planPane, logPane], spacing: 16)
         planPane.widthAnchor.constraint(equalTo: split.widthAnchor).isActive = true
         logPane.widthAnchor.constraint(equalTo: split.widthAnchor).isActive = true
-        planPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true; logPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 130).isActive = true
-        planPane.heightAnchor.constraint(equalTo: logPane.heightAnchor).isActive = true
+        planPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true; logPane.heightAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+        let planHeight = planPane.heightAnchor.constraint(equalTo: logPane.heightAnchor, multiplier: 2.3)
+        planHeight.priority = .defaultHigh; planHeight.isActive = true
         archiveProgress.style = .bar; archiveProgress.isIndeterminate = false; archiveProgress.minValue = 0; archiveProgress.maxValue = 1
         archiveAction.target = self; archiveAction.action = #selector(runArchive); archiveAction.bezelStyle = .rounded; archiveAction.hasDestructiveAction = true
         archiveCancel.target = self; archiveCancel.action = #selector(cancelTask); archiveCancel.isEnabled = false
@@ -251,8 +284,12 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         guard !restoring else { return }
         defaults.set(tool, forKey: "selectedTool"); defaults.set(mediaDirectory, forKey: "mediaDirectory"); defaults.set(archiveDirectory, forKey: "archiveDirectory")
         defaults.set(portQuery, forKey: "portQuery"); defaults.set(recursive.state == .on, forKey: "recursive"); defaults.set(proto.selectedSegment == 1, forKey: "udp")
-        if !window.isMiniaturized && !window.styleMask.contains(.fullScreen) { defaults.set(NSStringFromRect(window.frame), forKey: "windowFrame") }
+        if !window.isMiniaturized && !fullscreenTransition && !window.styleMask.contains(.fullScreen) { defaults.set(NSStringFromRect(window.frame), forKey: "windowFrame") }
     }
+    func windowWillEnterFullScreen(_ notification: Notification) { remember(); fullscreenTransition = true }
+    func windowDidEnterFullScreen(_ notification: Notification) { fullscreenTransition = false }
+    func windowWillExitFullScreen(_ notification: Notification) { fullscreenTransition = true }
+    func windowDidExitFullScreen(_ notification: Notification) { fullscreenTransition = false; remember() }
     func windowDidMove(_ notification: Notification) { remember() }
     func windowDidResize(_ notification: Notification) { remember() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { remember(); return true }
@@ -273,12 +310,101 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.allowsMultipleSelection = false
         panel.directoryURL = URL(fileURLWithPath: sender.tag == 0 ? mediaDirectory : archiveDirectory)
         if panel.runModal() == .OK, let url = panel.url {
+            recordDirectory(url.standardizedFileURL.path, page: sender.tag)
             if sender.tag == 0 { mediaInput.stringValue = url.path; scanMedia() } else { archiveInput.stringValue = url.path; scanArchive() }
+        }
+    }
+    func configureRecent(_ button: NSPopUpButton, page: Int) {
+        button.tag = page
+        let menu = NSMenu(); menu.delegate = self; button.menu = menu
+        menu.addItem(withTitle: "最近查看", action: nil, keyEquivalent: "")
+        button.toolTip = "选择最近使用的目录，或移除目录记录。"
+    }
+    func recordDirectory(_ directory: String, page: Int) {
+        let key = page == 0 ? "recentMediaDirectories" : "recentArchiveDirectories"
+        var paths = defaults.stringArray(forKey: key) ?? []
+        paths.removeAll { $0 == directory }; paths.insert(directory, at: 0)
+        defaults.set(Array(paths.prefix(10)), forKey: key)
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu === mediaRecent.menu || menu === archiveRecent.menu {
+            let page = menu === mediaRecent.menu ? 0 : 1
+            let paths = defaults.stringArray(forKey: page == 0 ? "recentMediaDirectories" : "recentArchiveDirectories") ?? []
+            menu.removeAllItems(); menu.addItem(withTitle: "最近查看", action: nil, keyEquivalent: "")
+            menu.autoenablesItems = false
+            if paths.isEmpty {
+                let empty = menu.addItem(withTitle: "暂无最近查看的目录", action: nil, keyEquivalent: ""); empty.isEnabled = false
+            } else {
+                let removals = NSMenu(title: "移除记录")
+                for path in paths {
+                    let item = menu.addItem(withTitle: (path as NSString).abbreviatingWithTildeInPath, action: #selector(openRecent), keyEquivalent: "")
+                    item.target = self; item.tag = page; item.representedObject = path; item.toolTip = path; item.isEnabled = !busy
+                    let remove = removals.addItem(withTitle: item.title, action: #selector(removeRecent), keyEquivalent: "")
+                    remove.target = self; remove.tag = page; remove.representedObject = path
+                }
+                menu.addItem(.separator())
+                let remove = menu.addItem(withTitle: "移除记录", action: nil, keyEquivalent: ""); remove.submenu = removals
+                let clear = menu.addItem(withTitle: "清空最近查看", action: #selector(removeRecent), keyEquivalent: "")
+                clear.target = self; clear.tag = page
+            }
+            return
+        }
+        let table = menu === mediaTable.menu ? mediaTable : archiveTable
+        let files = table === mediaTable ? visibleMedia : archives
+        let row = table.clickedRow
+        menu.removeAllItems(); menu.autoenablesItems = false
+        guard files.indices.contains(row) else { return }
+        let file = files[row]
+        for (title, operation) in [("打开", 0), ("打开文件目录", 1), ("在访达中显示", 2), ("复制文件路径", 3)] {
+            let item = menu.addItem(withTitle: title, action: #selector(fileAction), keyEquivalent: "")
+            item.target = self; item.tag = operation; item.representedObject = file
+            item.isEnabled = !archiveRunning || table === mediaTable
+            if operation == 0 { item.toolTip = "使用系统为此文件类型设置的默认应用打开。" }
+        }
+    }
+    @objc func openRecent(_ sender: NSMenuItem) {
+        guard !busy, let path = sender.representedObject as? String else { return }
+        if sender.tag == 0 { mediaInput.stringValue = path; scanMedia() } else { archiveInput.stringValue = path; scanArchive() }
+    }
+    @objc func removeRecent(_ sender: NSMenuItem) {
+        let key = sender.tag == 0 ? "recentMediaDirectories" : "recentArchiveDirectories"
+        if let path = sender.representedObject as? String {
+            defaults.set((defaults.stringArray(forKey: key) ?? []).filter { $0 != path }, forKey: key)
+        } else { defaults.removeObject(forKey: key) }
+    }
+    @objc func clearCurrent(_ sender: NSButton) {
+        guard !busy else { return }
+        if sender.tag == 0 {
+            mediaDirectory = ""; mediaInput.stringValue = ""; mediaSearch.stringValue = ""
+            mediaFiles = []; visibleMedia = []; mediaCache = [:]; mediaSizes = [:]
+            mediaTable.deselectAll(nil); mediaTable.reloadData(); mediaCount.stringValue = "尚未扫描"
+            mediaStatus.stringValue = "已清空当前查看，选择目录或从最近查看中重新打开。"
+            showMediaPlaceholder("选择一个媒体文件", message: "选择目录后查看文件属性。")
+        } else {
+            archiveDirectory = ""; archiveInput.stringValue = ""; archives = []
+            archiveTable.deselectAll(nil); archiveTable.reloadData(); archiveCount.stringValue = "处理计划"
+            archiveLog.string = ""; archiveProgress.stopAnimation(nil); archiveProgress.isIndeterminate = false; archiveProgress.doubleValue = 0
+            archiveStatus.stringValue = "已清空当前查看，选择目录后生成处理计划。"
+            archiveAction.isEnabled = false
+        }
+        remember()
+    }
+    @objc func fileAction(_ sender: NSMenuItem) {
+        guard let path = sender.representedObject as? String else { return }
+        let url = URL(fileURLWithPath: path)
+        switch sender.tag {
+        case 0:
+            if !NSWorkspace.shared.open(url) { currentStatus.stringValue = "无法打开文件，请检查文件是否存在以及默认打开应用。" }
+        case 1:
+            if !NSWorkspace.shared.open(url.deletingLastPathComponent()) { currentStatus.stringValue = "无法打开文件目录。" }
+        case 2: NSWorkspace.shared.activateFileViewerSelecting([url])
+        default: NSPasteboard.general.clearContents(); NSPasteboard.general.setString(path, forType: .string)
         }
     }
     func setBusy(_ value: Bool) {
         busy = value
-        for control in [mediaInput as NSControl, archiveInput, portInput, mediaChoose, archiveChoose, mediaRefresh, archiveRefresh, portRefresh, recursive, mediaSearch, proto, archiveAction] { control.isEnabled = !value }
+        for control in [mediaInput as NSControl, archiveInput, portInput, mediaChoose, archiveChoose, mediaRefresh, archiveRefresh, mediaClear, archiveClear, mediaRecent, archiveRecent, portRefresh, recursive, mediaSearch, proto] { control.isEnabled = !value }
+        archiveAction.isEnabled = !value && !archiveDirectory.isEmpty
         archiveCancel.isEnabled = value && archiveRunning
         portAction.isEnabled = !value && ports.indices.contains(portTable.selectedRow)
     }
@@ -313,12 +439,19 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     @objc func scanMedia() {
         guard !busy else { return }
         let dir = (mediaInput.stringValue as NSString).expandingTildeInPath; var isDir: ObjCBool = false
+        guard !dir.isEmpty else { mediaStatus.stringValue = "选择目录或从最近查看中打开。"; return }
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { mediaStatus.stringValue = "目录不存在，请重新输入或选择目录。"; return }
-        mediaDirectory = URL(fileURLWithPath: dir).standardizedFileURL.path; mediaInput.stringValue = mediaDirectory; remember()
-        mediaFiles = []; visibleMedia = []; mediaCache = [:]; mediaTable.reloadData(); mediaStatus.stringValue = "正在扫描媒体文件…"
+        let directory = URL(fileURLWithPath: dir).standardizedFileURL.path
+        if directory != mediaDirectory { recordDirectory(directory, page: 0) }
+        mediaDirectory = directory; mediaInput.stringValue = mediaDirectory; remember()
+        mediaFiles = []; visibleMedia = []; mediaCache = [:]; mediaSizes = [:]; mediaTable.deselectAll(nil); mediaTable.reloadData(); mediaStatus.stringValue = "正在扫描媒体文件…"
         run(["-c", "source \"$1\"; media_scan \"$2\" \"$3\"", "_", toolbox.appendingPathComponent("tools/media/videoinfo_beauty.sh").path, mediaDirectory, recursive.state == .on ? "1" : "0"]) { data, code in
             guard code == 0 else { self.showMediaPlaceholder("扫描失败", message: String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\0", with: "\n")); self.mediaStatus.stringValue = "请检查目录权限，或切换其他目录。"; return }
-            self.mediaFiles = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }; self.filterMedia()
+            self.mediaFiles = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
+            for file in self.mediaFiles {
+                if let size = try? URL(fileURLWithPath: file).resourceValues(forKeys: [.fileSizeKey]).fileSize { self.mediaSizes[file] = Int64(size) }
+            }
+            self.filterMedia()
             self.mediaStatus.stringValue = self.mediaFiles.isEmpty ? "此目录没有媒体文件，可更换目录或包含子目录。" : "选择文件即可查看属性 · 支持常见音视频格式"
             self.showMediaPlaceholder("选择一个媒体文件", message: "格式、视频和音轨属性会按所选文件显示。")
         }
@@ -326,8 +459,51 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     func filterMedia() {
         let query = mediaSearch.stringValue
         visibleMedia = mediaFiles.filter { query.isEmpty || ($0 as NSString).lastPathComponent.localizedCaseInsensitiveContains(query) }
-        mediaTable.reloadData(); mediaCount.stringValue = "\(visibleMedia.count) 个文件" + (query.isEmpty ? "" : " · 共 \(mediaFiles.count) 个")
+        mediaTable.deselectAll(nil); sortMedia(); mediaCount.stringValue = "\(visibleMedia.count) 个文件" + (query.isEmpty ? "" : " · 共 \(mediaFiles.count) 个")
         showMediaPlaceholder("选择一个媒体文件", message: "格式、视频和音轨属性会按所选文件显示。")
+    }
+    func sortMedia() {
+        let selected = visibleMedia.indices.contains(mediaTable.selectedRow) ? visibleMedia[mediaTable.selectedRow] : nil
+        visibleMedia.sort { a, b in
+            let result: ComparisonResult
+            if mediaSortColumn == 2 {
+                let left = mediaSizes[a] ?? -1, right = mediaSizes[b] ?? -1
+                result = left == right ? .orderedSame : left < right ? .orderedAscending : .orderedDescending
+            } else {
+                let left = mediaSortColumn == 1 ? (a as NSString).pathExtension : (a as NSString).lastPathComponent
+                let right = mediaSortColumn == 1 ? (b as NSString).pathExtension : (b as NSString).lastPathComponent
+                result = left.localizedStandardCompare(right)
+            }
+            let ordered = result == .orderedSame ? a.localizedStandardCompare(b) : result
+            return mediaSortAscending ? ordered == .orderedAscending : ordered == .orderedDescending
+        }
+        reordering = true; mediaTable.reloadData()
+        if let selected, let row = visibleMedia.firstIndex(of: selected) { mediaTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        reordering = false
+    }
+    func sortPorts() {
+        let selected = ports.indices.contains(portTable.selectedRow) ? ports[portTable.selectedRow] : nil
+        let index = [2, 4, 0, 3, 5][portSortColumn]
+        ports.sort { a, b in
+            let result: ComparisonResult
+            if portSortColumn == 0 || portSortColumn == 2 {
+                let left = Int(a[index]) ?? 0, right = Int(b[index]) ?? 0
+                result = left == right ? .orderedSame : left < right ? .orderedAscending : .orderedDescending
+            } else { result = a[index].localizedStandardCompare(b[index]) }
+            let ordered = result == .orderedSame ? a.joined(separator: "\t").localizedStandardCompare(b.joined(separator: "\t")) : result
+            return portSortAscending ? ordered == .orderedAscending : ordered == .orderedDescending
+        }
+        reordering = true; portTable.reloadData()
+        if let selected, let row = ports.firstIndex(of: selected) { portTable.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
+        reordering = false
+    }
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        guard let descriptor = tableView.sortDescriptors.first, let key = descriptor.key, let column = Int(key) else { return }
+        if tableView === mediaTable, (0...2).contains(column) {
+            mediaSortColumn = column; mediaSortAscending = descriptor.ascending; sortMedia()
+        } else if tableView === portTable, (0...4).contains(column) {
+            portSortColumn = column; portSortAscending = descriptor.ascending; sortPorts()
+        }
     }
     func controlTextDidChange(_ notification: Notification) { if (notification.object as? NSSearchField) === mediaSearch { filterMedia() } }
     func showMediaPlaceholder(_ title: String, message: String) {
@@ -359,14 +535,17 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     @objc func scanArchive() {
         guard !busy else { return }
         let dir = (archiveInput.stringValue as NSString).expandingTildeInPath; var isDir: ObjCBool = false
+        guard !dir.isEmpty else { archiveStatus.stringValue = "选择目录后生成处理计划。"; archiveAction.isEnabled = false; return }
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { archiveStatus.stringValue = "目录不存在，请重新选择。"; return }
-        archiveDirectory = URL(fileURLWithPath: dir).standardizedFileURL.path; archiveInput.stringValue = archiveDirectory; remember()
-        archives = []; archiveTable.reloadData(); archiveStatus.stringValue = "正在生成处理计划…"
+        let directory = URL(fileURLWithPath: dir).standardizedFileURL.path
+        if directory != archiveDirectory { recordDirectory(directory, page: 1) }
+        archiveDirectory = directory; archiveInput.stringValue = archiveDirectory; remember()
+        archives = []; archiveTable.deselectAll(nil); archiveTable.reloadData(); archiveStatus.stringValue = "正在生成处理计划…"
         archiveLog.string = "准备就绪。先查看处理计划，再点击“开始整理”。没有 ZIP 时也可以整理已有目录。"
         archiveProgress.doubleValue = 0; archiveProgress.maxValue = 1
         run([archiveDirectory, "-maxdepth", "2", "-type", "f", "-iname", "*.zip", "-print0"], executable: "/usr/bin/find") { data, code in
             guard code == 0 else { self.archiveLog.string = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\0", with: "\n"); self.archiveCount.stringValue = "未生成处理计划"; self.archiveStatus.stringValue = "扫描失败，请检查目录权限。"; return }
-            self.archives = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }; self.archiveTable.reloadData()
+            self.archives = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }; self.archiveTable.reloadData()
             self.archiveCount.stringValue = "处理计划 · \(self.archives.count) 个 ZIP"
             self.archiveStatus.stringValue = self.archives.isEmpty ? "没有 ZIP，仍可整理已有目录。" : "预览不会修改文件。"
         }
@@ -382,7 +561,7 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         run([toolbox.appendingPathComponent("tools/archive/zip-tidy.sh").path, dir], stream: true) { _, code in
             self.archiveProgress.stopAnimation(nil); self.archiveProgress.isIndeterminate = false
             if code == 0 { self.archiveProgress.doubleValue = self.archiveProgress.maxValue }
-            self.archiveStatus.stringValue = code == 0 ? "整理完成 · 点击“更新计划”查看目录现状" : code == 143 || code == 130 ? "已中断，未完成 ZIP 已保留。" : "整理结束，存在错误（退出码 \(code)），请查看执行记录。"
+            self.archiveStatus.stringValue = code == 0 ? "整理完成 · 点击“重新扫描”查看目录现状" : code == 143 || code == 130 ? "已中断，未完成 ZIP 已保留。" : "整理结束，存在错误（退出码 \(code)），请查看执行记录。"
         }
     }
     @objc func scanPorts() {
@@ -390,10 +569,10 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let value = portInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard value.isEmpty || (value.utf8.allSatisfy { (48...57).contains($0) } && value.count <= 5 && (1...65535).contains(Int(value) ?? 0)) else { portStatus.stringValue = "端口必须为 1–65535；留空查询全部。"; return }
         portQuery = value.isEmpty ? "" : String(Int(value)!); portInput.stringValue = portQuery; remember()
-        ports = []; portTable.reloadData(); portValues.values.forEach { $0.stringValue = "—" }; portAction.isEnabled = false; portCount.stringValue = "正在查询…"; portStatus.stringValue = "仅显示本地监听或绑定，不包含客户端连接。"
+        ports = []; portTable.deselectAll(nil); portTable.reloadData(); portValues.values.forEach { $0.stringValue = "—" }; portAction.isEnabled = false; portCount.stringValue = "正在查询…"; portStatus.stringValue = "仅显示本地监听或绑定，不包含客户端连接。"
         run([toolbox.appendingPathComponent("tools/network/port-info.sh").path, "--snapshot", proto.selectedSegment == 0 ? "TCP" : "UDP", portQuery]) { data, code in
             guard code == 0 else { self.portStatus.stringValue = String(decoding: data, as: UTF8.self); self.portCount.stringValue = "查询失败"; return }
-            self.ports = String(decoding: data, as: UTF8.self).split(separator: "\n").map { $0.components(separatedBy: "\t") }.filter { $0.count == 7 }; self.portTable.reloadData()
+            self.ports = String(decoding: data, as: UTF8.self).split(separator: "\n").map { $0.components(separatedBy: "\t") }.filter { $0.count == 7 }; self.sortPorts()
             self.portCount.stringValue = "\(self.ports.count) 个占用 · 精确端口 \(self.portQuery.isEmpty ? "全部" : self.portQuery)"
             self.portStatus.stringValue = self.ports.isEmpty ? "没有匹配的端口占用。" : "选择进程查看来源；终止前会再次核对身份。"
         }
@@ -403,7 +582,9 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if tableView === sidebar {
             guard names.indices.contains(row) else { return nil }
-            return stack([symbol(icons[row], description: names[row]), text(names[row], size: 13, weight: .medium)], vertical: false, spacing: 10)
+            let cell = NSView()
+            let contents = stack([symbol(icons[row], description: names[row]), text(names[row], size: 13, weight: .medium)], vertical: false, spacing: 10)
+            pin(contents, in: cell, inset: 10); return cell
         }
         let column = Int(tableColumn?.identifier.rawValue ?? "0") ?? 0; var value = ""
         if tableView === mediaTable {
@@ -413,7 +594,11 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
                 let name = text((file as NSString).lastPathComponent); name.lineBreakMode = .byTruncatingMiddle; name.toolTip = file
                 return stack([symbol(audio ? "waveform" : "film", description: audio ? "音频" : "视频", size: 16), name], vertical: false)
             }
-            value = (file as NSString).pathExtension.uppercased()
+            if column == 2 {
+                if let size = mediaSizes[file] {
+                    value = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
+                } else { value = "—" }
+            } else { value = (file as NSString).pathExtension.uppercased() }
         } else if tableView === archiveTable {
             guard archives.indices.contains(row) else { return nil }; let file = archives[row]
             value = column == 0 ? String(file.dropFirst(archiveDirectory.count + 1)) : archiveDirectory + "/" + ((file as NSString).lastPathComponent as NSString).deletingPathExtension
@@ -426,7 +611,7 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         return stack([cell], vertical: false, spacing: 0)
     }
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let table = notification.object as? NSTableView, !busy else { return }
+        guard let table = notification.object as? NSTableView, !busy, !reordering else { return }
         if table === sidebar {
             guard !restoring, names.indices.contains(sidebar.selectedRow), tool != sidebar.selectedRow else { return }
             tool = sidebar.selectedRow; [mediaPage, archivePage, portsPage].enumerated().forEach { $0.element.isHidden = $0.offset != tool }; remember(); loadCurrent()
