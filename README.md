@@ -117,7 +117,7 @@ source /path/to/shell-command-hub/lib/aliases.zsh
 
 ## 独立应用交付
 
-原生 GUI 和终端 TUI 均提供独立 `.app`，内置运行依赖，用户无需开发目录。构建、升级、更新源和签名说明见 [应用交付](docs/distribution.md)。
+Shell Command Hub 提供一个 `.app`，包含原生界面、终端 TUI 及其运行依赖。构建、升级、更新源和签名说明见 [应用交付](docs/distribution.md)。
 
 GUI 使用符合 macOS 风格的圆角矩形应用图标，侧栏完整显示 Shell Command Hub，可从底部“进入终端TUI”打开终端界面，并支持 macOS 原生全屏。
 

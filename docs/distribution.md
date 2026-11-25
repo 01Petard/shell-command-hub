@@ -2,11 +2,11 @@
 
 ## 用户安装
 
-交付两个独立应用及其 ZIP：`Shell Command Hub.app` 为原生 GUI，`Shell Command Hub TUI.app` 双击后打开终端工具箱。GUI 内也能打开 TUI。
+交付 `Shell Command Hub.app` 及其 ZIP。打开应用进入原生界面，从侧栏底部的「进入终端 TUI」打开终端工具箱。
 
 将应用拖入“应用程序”后启动即可。应用内包含工具脚本、fzf、MediaInfo 及其非系统动态库，用户不需要源码、Homebrew、Python 或开发工具。
 
-两个 TUI 入口默认使用 macOS 为 `.command` 文件选择的应用。Tabby 用户可为 Shell Command Hub 设置共享终端偏好。Tabby 会提示确认运行内置启动器。
+TUI 入口默认使用 macOS 为 `.command` 文件选择的应用。Tabby 用户可设置 Shell Command Hub 的终端偏好。Tabby 会提示确认运行内置启动器。
 
 ```sh
 defaults write io.shellcommandhub tuiTerminal -string org.tabby
@@ -29,7 +29,7 @@ defaults delete io.shellcommandhub tuiTerminal
 
 构建需要 macOS Command Line Tools（Swift、codesign、install_name_tool、vtool）以及用于打包的 fzf、mediainfo。产物位于 `build/release/`；重复构建在验证新应用后替换构建目录中的旧产物，不修改已安装应用。
 
-版本号统一来自 `VERSION`，写入应用元数据和 ZIP 名称。应用标识固定，用户退出旧版本后用新版 `.app` 替换即可升级。两个应用独立包含完整运行环境，可分别交付。
+版本号统一来自 `VERSION`，写入应用元数据和 ZIP 名称。应用标识固定，用户退出旧版本后用新版 `.app` 替换即可升级。
 
 ## 更新检查
 

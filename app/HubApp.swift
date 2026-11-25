@@ -1,6 +1,6 @@
 /**
  * [INPUT]: 使用 AppKit、共享终端偏好及应用包内的运行依赖。
- * [OUTPUT]: 提供工具页面、圆角选中侧栏及终端入口。
+ * [OUTPUT]: 提供工具页面、圆角选中侧栏及内置 TUI 入口。
  * [POS]: 原生应用入口，将页面操作转为工具调用并展示结果。
  * [PROTOCOL]: Update this header on change, then check AGENTS.md
  */
@@ -44,6 +44,7 @@ if CommandLine.arguments.contains("--self-test") {
     for path in ["hub", "lib/tool-tui.zsh", "tools/network/port-info.sh", "tools/archive/zip-tidy.sh", "tools/media/videoinfo_beauty.sh"] {
         ok = ok && FileManager.default.fileExists(atPath: toolbox.appendingPathComponent(path).path)
     }
+    ok = ok && FileManager.default.isExecutableFile(atPath: resources.appendingPathComponent("launch-tui.command").path)
     ok = ok && NSImage(contentsOf: resources.appendingPathComponent("HubIcon.icns")) != nil
     print("Shell Command Hub \(appVersion): bundled runtime \(ok ? "OK" : "FAILED")")
     exit(ok ? 0 : 1)
@@ -692,8 +693,5 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
 }
 extension NSSize { var area: CGFloat { max(0, width) * max(0, height) } }
 
-if bundle.object(forInfoDictionaryKey: "HubInterface") as? String == "tui" {
-    do { try terminalLaunch(); exit(0) } catch { fputs("\(error)\n", stderr); exit(1) }
-}
 let app = NSApplication.shared; app.setActivationPolicy(.regular)
 let delegate = HubApp(); app.delegate = delegate; app.run()
