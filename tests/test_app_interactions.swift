@@ -29,6 +29,7 @@ try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectorie
 defer { try? FileManager.default.removeItem(at: fixtures) }
 let file = fixtures.appendingPathComponent("clip.wav")
 try Data([1, 2, 3]).write(to: file)
+expect(subject.archiveProgress.isHidden && subject.archiveProgress.doubleValue == 0, "archive progress must be hidden on launch")
 subject.mediaDirectory = fixtures.path; subject.mediaInput.stringValue = fixtures.path
 subject.mediaFiles = [file.path]; subject.visibleMedia = [file.path]; subject.mediaSizes = [file.path: 3]
 subject.mediaCache[file.path] = Data([1]); subject.mediaSearch.stringValue = "clip"
@@ -39,9 +40,20 @@ expect(subject.mediaFiles.isEmpty && subject.visibleMedia.isEmpty && subject.med
 expect(testDefaults.stringArray(forKey: "recentMediaDirectories") == [fixtures.path], "clearing the current view must preserve history")
 expect(FileManager.default.fileExists(atPath: file.path), "clearing the view must not delete files")
 subject.archiveDirectory = fixtures.path; subject.archiveInput.stringValue = fixtures.path
+subject.archiveProgress.isHidden = false; subject.archiveProgress.doubleValue = 1
+subject.scanArchive()
+expect(subject.archiveProgress.isHidden && subject.archiveProgress.doubleValue == 0, "rescanning must hide and reset archive progress")
+let scanDeadline = Date().addingTimeInterval(5)
+while subject.busy && Date() < scanDeadline {
+    RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+}
+expect(!subject.busy && subject.archiveCount.stringValue == "处理计划 · 0 个 ZIP", "fixture scan must complete")
+expect(subject.archiveProgress.isHidden, "a completed scan must keep archive progress hidden")
 subject.archives = ["/test.zip"]; subject.archiveLog.string = "completed"
+subject.archiveProgress.isHidden = false; subject.archiveProgress.doubleValue = 1
 subject.clearCurrent(subject.archiveClear)
 expect(subject.archiveDirectory.isEmpty && subject.archives.isEmpty && subject.archiveLog.string.isEmpty && !subject.archiveAction.isEnabled, "clear plan, log and execution state")
+expect(subject.archiveProgress.isHidden && subject.archiveProgress.doubleValue == 0, "clear must hide and reset archive progress")
 expect(testDefaults.stringArray(forKey: "recentArchiveDirectories") == ["/archives"], "archive clear must preserve recent directories")
 subject.busy = true; subject.mediaInput.stringValue = "pending"; subject.clearCurrent(subject.mediaClear)
 expect(subject.mediaInput.stringValue == "pending", "do not clear an active task")
@@ -73,6 +85,10 @@ for size in [NSSize(width: 900, height: 620), NSSize(width: 1920, height: 1080)]
     subject.window.setContentSize(size); subject.window.contentView!.layoutSubtreeIfNeeded()
     expect(abs(subject.workspace.frame.maxX - subject.window.contentView!.bounds.maxX) < 1, "workspace must fill the window at \(size)")
     expect(subject.mediaPage.frame.width > 600, "media page must expand with the window")
+    for button in [subject.archiveClear, subject.archiveAction] {
+        let width = button.alignmentRect(forFrame: button.frame).width
+        expect(abs(width - button.intrinsicContentSize.width) < 2, "archive button must fit its title at \(size)")
+    }
 }
 expect(subject.windowShouldClose(subject.window), "red close must close the window")
 expect(!subject.applicationShouldTerminateAfterLastWindowClosed(testApplication), "closing the last window must keep the process alive")

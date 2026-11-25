@@ -6,6 +6,18 @@
 
 将应用拖入“应用程序”后启动即可。应用内包含工具脚本、fzf、MediaInfo 及其非系统动态库，用户不需要源码、Homebrew、Python 或开发工具。
 
+两个 TUI 入口默认使用 macOS 为 `.command` 文件选择的应用。Tabby 用户可为 Shell Command Hub 设置共享终端偏好。Tabby 会提示确认运行内置启动器。
+
+```sh
+defaults write io.shellcommandhub tuiTerminal -string org.tabby
+```
+
+删除此偏好可恢复系统文件关联。Tabby 未安装时也使用系统文件关联。
+
+```sh
+defaults delete io.shellcommandhub tuiTerminal
+```
+
 本机产物是 Apple Silicon / arm64。当前打入的 MediaInfo 要求 macOS 15，因此本次应用最低为 macOS 15；打包器会根据所包含依赖自动计算最低系统版本。Intel 版本需要使用 Intel 依赖在相应构建环境另行构建，当前未生成 Intel/通用二进制。
 
 ## 开发者构建

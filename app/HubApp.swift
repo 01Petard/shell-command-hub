@@ -1,3 +1,9 @@
+/**
+ * [INPUT]: 使用 AppKit、共享终端偏好及应用包内的运行依赖。
+ * [OUTPUT]: 提供工具页面、圆角选中侧栏及终端入口。
+ * [POS]: 原生应用入口，将页面操作转为工具调用并展示结果。
+ * [PROTOCOL]: Update this header on change, then check AGENTS.md
+ */
 import AppKit
 import Foundation
 
@@ -5,7 +11,7 @@ let bundle = Bundle.main
 let resources = bundle.resourceURL!
 let toolbox = resources.appendingPathComponent("toolbox")
 let runtime = resources.appendingPathComponent("runtime/bin")
-let appVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.2"
+let appVersion = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.2.3"
 func environment() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["PATH"] = runtime.path + ":/usr/bin:/bin:/usr/sbin:/sbin"
@@ -13,7 +19,18 @@ func environment() -> [String: String] {
     return env
 }
 func terminalLaunch() throws {
-    guard NSWorkspace.shared.open(resources.appendingPathComponent("launch-tui.command")) else {
+    let launcher = resources.appendingPathComponent("launch-tui.command")
+    let workspace = NSWorkspace.shared
+    if UserDefaults(suiteName: "io.shellcommandhub")?.string(forKey: "tuiTerminal") == "org.tabby",
+       let app = workspace.urlForApplication(withBundleIdentifier: "org.tabby"),
+       let executable = Bundle(url: app)?.executableURL {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = ["run", "/bin/zsh", launcher.path]
+        try process.run()
+        return
+    }
+    guard workspace.open(launcher) else {
         throw NSError(domain: "HubTerminal", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法打开内置终端启动器。"])
     }
 }
@@ -155,18 +172,20 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let side = NSVisualEffectView(); side.material = .sidebar; side.blendingMode = .behindWindow
         let content = window.contentView!; side.translatesAutoresizingMaskIntoConstraints = false; workspace.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(side); content.addSubview(workspace)
-        NSLayoutConstraint.activate([side.leadingAnchor.constraint(equalTo: content.leadingAnchor), side.topAnchor.constraint(equalTo: content.topAnchor), side.bottomAnchor.constraint(equalTo: content.bottomAnchor), side.widthAnchor.constraint(equalToConstant: 224), workspace.leadingAnchor.constraint(equalTo: side.trailingAnchor), workspace.trailingAnchor.constraint(equalTo: content.trailingAnchor), workspace.topAnchor.constraint(equalTo: content.topAnchor), workspace.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
+        NSLayoutConstraint.activate([side.leadingAnchor.constraint(equalTo: content.leadingAnchor), side.topAnchor.constraint(equalTo: content.topAnchor), side.bottomAnchor.constraint(equalTo: content.bottomAnchor), side.widthAnchor.constraint(equalToConstant: 192), workspace.leadingAnchor.constraint(equalTo: side.trailingAnchor), workspace.trailingAnchor.constraint(equalTo: content.trailingAnchor), workspace.topAnchor.constraint(equalTo: content.topAnchor), workspace.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
         let logo = NSImageView(image: NSApp.applicationIconImage); logo.widthAnchor.constraint(equalToConstant: 40).isActive = true; logo.heightAnchor.constraint(equalToConstant: 40).isActive = true
         let brand = stack([logo, stack([text("Shell", size: 12, weight: .medium, color: .secondaryLabelColor), text("Command Hub", size: 15, weight: .semibold)], spacing: 1)], vertical: false, spacing: 10)
-        sidebar.headerView = nil; sidebar.rowHeight = 44; sidebar.style = .plain; sidebar.backgroundColor = .clear
+        sidebar.headerView = nil; sidebar.rowHeight = 44; sidebar.style = .inset; sidebar.backgroundColor = .clear
         sidebar.intercellSpacing = .zero; sidebar.selectionHighlightStyle = .regular
         sidebar.delegate = self; sidebar.dataSource = self; sidebar.focusRingType = .none
         sidebar.addTableColumn(NSTableColumn(identifier: .init("navigation")))
         let navigation = NSScrollView(); navigation.drawsBackground = false; navigation.documentView = sidebar
-        navigation.heightAnchor.constraint(equalToConstant: 132).isActive = true
+        // 为内嵌样式的上下留白各预留 10 点。
+        navigation.heightAnchor.constraint(equalToConstant: CGFloat(names.count) * sidebar.rowHeight + 20).isActive = true
         let terminal = NSButton(title: "进入终端TUI", image: NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)!, target: self, action: #selector(openTerminal)); terminal.bezelStyle = .recessed
         let spacer = NSView(); spacer.setContentHuggingPriority(.init(1), for: .vertical)
         let contents = stack([brand, navigation, spacer, terminal], spacing: 22)
+        contents.alignment = .centerX
         pin(contents, in: side, inset: 14); navigation.widthAnchor.constraint(equalTo: contents.widthAnchor).isActive = true
         for page in [mediaPage, archivePage, portsPage] { pin(page, in: workspace) }
     }
@@ -233,9 +252,8 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         rules.setContentHuggingPriority(.required, for: .vertical)
         let plan = tableScroll(archiveTable, columns: [("待处理压缩包", 240), ("预计解压位置", 400)])
         let planHeading = stack([archiveCount, archiveRefresh, archiveClear], vertical: false)
-        archiveCount.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let planPane = stack([planHeading, plan], spacing: 10)
-        planHeading.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true; plan.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true
+        planHeading.widthAnchor.constraint(lessThanOrEqualTo: planPane.widthAnchor).isActive = true; plan.widthAnchor.constraint(equalTo: planPane.widthAnchor).isActive = true
         archiveLog.isEditable = false; archiveLog.isSelectable = true; archiveLog.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         archiveLog.textContainerInset = NSSize(width: 12, height: 12); archiveLog.isHorizontallyResizable = false; archiveLog.isVerticallyResizable = true
         archiveLog.autoresizingMask = [.width]; archiveLog.textContainer?.widthTracksTextView = true
@@ -249,13 +267,14 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         let planHeight = planPane.heightAnchor.constraint(equalTo: logPane.heightAnchor, multiplier: 2.3)
         planHeight.priority = .defaultHigh; planHeight.isActive = true
         archiveProgress.style = .bar; archiveProgress.isIndeterminate = false; archiveProgress.minValue = 0; archiveProgress.maxValue = 1
+        archiveProgress.doubleValue = 0; archiveProgress.isHidden = true
         archiveAction.target = self; archiveAction.action = #selector(runArchive); archiveAction.bezelStyle = .rounded; archiveAction.hasDestructiveAction = true
         archiveCancel.target = self; archiveCancel.action = #selector(cancelTask); archiveCancel.isEnabled = false
         let buttons = stack([archiveStatus, archiveCancel, archiveAction], vertical: false, spacing: 14)
-        archiveStatus.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let root = stack([text("解压整理", size: 24, weight: .semibold), text("先核对处理计划，再执行整个目录。", color: .secondaryLabelColor), path, rules, split, archiveProgress, buttons], spacing: 16)
         pin(root, in: archivePage, inset: 24)
-        for view in [path, split, archiveProgress, buttons] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for view in [path, split, archiveProgress] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        buttons.widthAnchor.constraint(lessThanOrEqualTo: root.widthAnchor).isActive = true
         split.setContentHuggingPriority(.init(1), for: .vertical)
     }
     func buildPortsPage() {
@@ -263,7 +282,8 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         portInput.widthAnchor.constraint(greaterThanOrEqualToConstant: 170).isActive = true; portInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         proto.target = self; proto.action = #selector(scanPorts)
         portRefresh.target = self; portRefresh.action = #selector(scanPorts)
-        let search = stack([portInput, portRefresh, proto], vertical: false, spacing: 12)
+        portAction.target = self; portAction.action = #selector(stopSelectedPort); portAction.isEnabled = false; portAction.hasDestructiveAction = true
+        let search = stack([portInput, portRefresh, portAction, proto], vertical: false, spacing: 12)
         let table = tableScroll(portTable, columns: [("端口", 65), ("进程", 160), ("PID", 75), ("用户", 85), ("本地地址", 250)])
         let fieldNames = ["进程", "启动时间", "父进程", "工作目录"]
         let grid = NSGridView(views: fieldNames.map { name in
@@ -272,12 +292,10 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         })
         grid.columnSpacing = 18; grid.rowSpacing = 10; grid.column(at: 0).width = 64
         grid.column(at: 0).xPlacement = .trailing; grid.column(at: 1).xPlacement = .fill
-        portAction.target = self; portAction.action = #selector(stopSelectedPort); portAction.isEnabled = false; portAction.hasDestructiveAction = true
-        let actions = stack([portStatus, portAction], vertical: false, spacing: 16); portStatus.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let separator = NSBox(); separator.boxType = .separator
-        let root = stack([text("端口管理", size: 24, weight: .semibold), text("按本地端口定位占用，核对进程来源后安全终止。", color: .secondaryLabelColor), search, portCount, table, separator, text("进程信息", size: 14, weight: .semibold), grid, actions], spacing: 14)
+        let root = stack([text("端口管理", size: 24, weight: .semibold), text("按本地端口定位占用，核对进程来源后安全终止。", color: .secondaryLabelColor), search, portCount, table, separator, text("进程信息", size: 14, weight: .semibold), grid, portStatus], spacing: 14)
         pin(root, in: portsPage, inset: 24)
-        for view in [search, table, separator, grid, actions] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
+        for view in [search, table, separator, grid, portStatus] { view.widthAnchor.constraint(equalTo: root.widthAnchor).isActive = true }
         table.setContentHuggingPriority(.init(1), for: .vertical)
     }
     func remember() {
@@ -384,6 +402,7 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
             archiveDirectory = ""; archiveInput.stringValue = ""; archives = []
             archiveTable.deselectAll(nil); archiveTable.reloadData(); archiveCount.stringValue = "处理计划"
             archiveLog.string = ""; archiveProgress.stopAnimation(nil); archiveProgress.isIndeterminate = false; archiveProgress.doubleValue = 0
+            archiveProgress.isHidden = true
             archiveStatus.stringValue = "已清空当前查看，选择目录后生成处理计划。"
             archiveAction.isEnabled = false
         }
@@ -534,6 +553,7 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
     }
     @objc func scanArchive() {
         guard !busy else { return }
+        archiveProgress.isHidden = true; archiveProgress.doubleValue = 0; archiveProgress.maxValue = 1
         let dir = (archiveInput.stringValue as NSString).expandingTildeInPath; var isDir: ObjCBool = false
         guard !dir.isEmpty else { archiveStatus.stringValue = "选择目录后生成处理计划。"; archiveAction.isEnabled = false; return }
         guard FileManager.default.fileExists(atPath: dir, isDirectory: &isDir), isDir.boolValue else { archiveStatus.stringValue = "目录不存在，请重新选择。"; return }
@@ -542,7 +562,6 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         archiveDirectory = directory; archiveInput.stringValue = archiveDirectory; remember()
         archives = []; archiveTable.deselectAll(nil); archiveTable.reloadData(); archiveStatus.stringValue = "正在生成处理计划…"
         archiveLog.string = "准备就绪。先查看处理计划，再点击“开始整理”。没有 ZIP 时也可以整理已有目录。"
-        archiveProgress.doubleValue = 0; archiveProgress.maxValue = 1
         run([archiveDirectory, "-maxdepth", "2", "-type", "f", "-iname", "*.zip", "-print0"], executable: "/usr/bin/find") { data, code in
             guard code == 0 else { self.archiveLog.string = String(decoding: data, as: UTF8.self).replacingOccurrences(of: "\0", with: "\n"); self.archiveCount.stringValue = "未生成处理计划"; self.archiveStatus.stringValue = "扫描失败，请检查目录权限。"; return }
             self.archives = data.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }.sorted { $0.localizedStandardCompare($1) == .orderedAscending }; self.archiveTable.reloadData()
@@ -557,12 +576,14 @@ final class HubApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTableVi
         guard dir == archiveDirectory else { scanArchive(); archiveStatus.stringValue = "目录已更改，请核对新计划后开始整理。"; return }
         guard confirm("开始解压整理？", "目录：\(dir)\n处理整个目录的两层 ZIP，成功后删除原包，并清理包装目录、整理文件夹名称。\n中断保留未完成 ZIP，已完成项目不回滚。") else { return }
         archiveLog.string = ""; archiveStatus.stringValue = "正在准备…"; archiveProgress.doubleValue = 0
-        archiveProgress.isIndeterminate = archives.isEmpty; archiveProgress.startAnimation(nil); archiveRunning = true
+        archiveProgress.isHidden = true; archiveProgress.isIndeterminate = archives.isEmpty; archiveRunning = true
         run([toolbox.appendingPathComponent("tools/archive/zip-tidy.sh").path, dir], stream: true) { _, code in
             self.archiveProgress.stopAnimation(nil); self.archiveProgress.isIndeterminate = false
             if code == 0 { self.archiveProgress.doubleValue = self.archiveProgress.maxValue }
+            self.archiveProgress.isHidden = self.archiveProgress.doubleValue == 0
             self.archiveStatus.stringValue = code == 0 ? "整理完成 · 点击“重新扫描”查看目录现状" : code == 143 || code == 130 ? "已中断，未完成 ZIP 已保留。" : "整理结束，存在错误（退出码 \(code)），请查看执行记录。"
         }
+        if archiveRunning { archiveProgress.isHidden = false; archiveProgress.startAnimation(nil) }
     }
     @objc func scanPorts() {
         guard !busy else { return }
